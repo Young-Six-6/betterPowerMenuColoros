@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">BetterPowerMenu</string>
+    <string name="settings_title">BetterPowerMenu</string>
+    <string name="settings_subtitle">配置电源菜单中的增强滑条</string>
+    <string name="power_menu_section">电源菜单</string>
+    <string name="hide_emergency_title">不显示紧急呼叫</string>
+    <string name="hide_emergency_summary">隐藏原版界面底部的紧急呼叫入口</string>
+    <string name="up_action_title">上滑动作</string>
+    <string name="up_action_summary">选择增强滑条向上滑动时执行的动作</string>
+    <string name="down_action_title">下滑动作</string>
+    <string name="down_action_summary">选择增强滑条向下滑动时执行的动作</string>
+    <string name="up_color_title">上滑颜色</string>
+    <string name="up_color_summary">上滑图标与进度颜色</string>
+    <string name="down_color_title">下滑颜色</string>
+    <string name="down_color_summary">下滑图标与进度颜色</string>
+    <string name="color_hex_hint">#RRGGBB</string>
+    <string name="color_invalid">请输入 6 位十六进制颜色，例如 #63C83B</string>
+    <string name="settings_apply_hint">设置会自动保存，并在下次打开电源菜单时应用</string>
+    <string name="root_section">高级功能</string>
+    <string name="root_checking">正在检测 Root</string>
+    <string name="root_checking_summary">如弹出授权请求，请允许本模块获取 Root</string>
+    <string name="root_granted">Root 已授权</string>
+    <string name="root_granted_summary">Recovery、EDL 和 Fastboot 动作已解锁</string>
+    <string name="root_not_granted">Root 未授权</string>
+    <string name="root_not_granted_summary">高级重启动作已隐藏，轻触可重新检测</string>
+    <string name="xposed_description">为 ColorOS 设计的双滑条电源菜单增强模块</string>
+</resources>

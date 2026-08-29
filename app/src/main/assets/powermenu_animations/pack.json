@@ -1,0 +1,7 @@
+{
+  "format": 1,
+  "name": "BetterPowerMenu default",
+  "reboot": "reboot_icon.json",
+  "shutdown": "shutdown_icon.json",
+  "arrow": "global_actions_arrow.json"
+}
