@@ -1,0 +1,135 @@
+name: Build BetterPowerMenu
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 构建成功后创建 GitHub Release
+        required: true
+        type: boolean
+        default: false
+      release_tag:
+        description: Release 标签，例如 v1.4.0；留空则自动生成
+        required: false
+        type: string
+      prerelease:
+        description: 将此次发布标记为预发布版本
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: betterpowermenu-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Compile APK
+    runs-on: ubuntu-latest
+    outputs:
+      version_name: ${{ steps.version.outputs.version_name }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Ensure Android SDK packages
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platforms;android-35 build-tools;35.0.0
+
+      - name: Read app version
+        id: version
+        shell: bash
+        run: |
+          version_name="$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -n 1)"
+          test -n "$version_name"
+          echo "version_name=$version_name" >> "$GITHUB_OUTPUT"
+          echo "Building BetterPowerMenu $version_name"
+
+      - name: Grant Gradle wrapper execute permission
+        run: chmod +x ./gradlew
+
+      - name: Assemble debug APK
+        run: ./gradlew --no-daemon --stacktrace assembleDebug
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: betterpowermenu-debug-${{ steps.version.outputs.version_name }}-${{ github.run_number }}
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish == true }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download compiled APK
+        uses: actions/download-artifact@v4
+        with:
+          name: betterpowermenu-debug-${{ needs.build.outputs.version_name }}-${{ github.run_number }}
+          path: dist
+
+      - name: Prepare release asset
+        id: release
+        shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.release_tag }}
+          VERSION_NAME: ${{ needs.build.outputs.version_name }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          tag="$INPUT_TAG"
+          if [[ -z "$tag" ]]; then
+            tag="v${VERSION_NAME}-${RUN_NUMBER}"
+          elif [[ "$tag" != v* ]]; then
+            tag="v${tag}"
+          fi
+
+          if [[ ! "$tag" =~ ^v[0-9A-Za-z._-]+$ ]]; then
+            echo "Invalid release tag: $tag"
+            exit 1
+          fi
+
+          asset="dist/BetterPowerMenu-${tag}.apk"
+          mv dist/app-debug.apk "$asset"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "asset=$asset" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.release.outputs.tag }}
+          ASSET: ${{ steps.release.outputs.asset }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          release_args=(
+            "$TAG"
+            "$ASSET"
+            --repo "$GITHUB_REPOSITORY"
+            --target "$GITHUB_SHA"
+            --title "BetterPowerMenu $TAG"
+            --generate-notes
+          )
+
+          if [[ "$PRERELEASE" == "true" ]]; then
+            release_args+=(--prerelease)
+          fi
+
+          gh release create "${release_args[@]}"

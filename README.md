@@ -70,7 +70,11 @@ Root 状态检测会执行 `su -c id` 并确认返回 `uid=0`。请允许然后�
 app/build/outputs/apk/debug/app-debug.apk
 ```
 
-也可以在 Android Studio 中导入项目
+也可以在 Android Studio 中导入项目。
+
+### GitHub Actions
+
+项目包含 `.github/workflows/build.yml`：
 
 ## 日志与故障排查
 
