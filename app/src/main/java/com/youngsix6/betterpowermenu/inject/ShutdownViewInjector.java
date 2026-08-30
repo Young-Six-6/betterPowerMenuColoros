@@ -1,6 +1,7 @@
 package com.youngsix6.betterpowermenu.inject;
 
 import android.content.Context;
+import android.graphics.Canvas;
 import android.graphics.RectF;
 import android.os.Looper;
 import android.view.Gravity;
@@ -72,9 +73,10 @@ public final class ShutdownViewInjector {
 
             int initHookCount = 0;
             try {
-                Set<XC_MethodHook.Unhook> initHooks = XposedBridge.hookAllMethods(
+                XC_MethodHook.Unhook initHook = hookExactIfPresent(
                         targetClass,
                         "initShutdownView",
+                        new Class<?>[]{Context.class},
                         new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
@@ -90,7 +92,7 @@ public final class ShutdownViewInjector {
                             injectSafely(param.thisObject);
                         }
                         });
-                initHookCount = initHooks == null ? 0 : initHooks.size();
+                initHookCount = initHook == null ? 0 : 1;
             } catch (Throwable initHookError) {
                 ModuleLog.w(LOG, "initShutdownView Hook 不可用，继续尝试 getter 备用路径",
                         initHookError);
@@ -100,9 +102,10 @@ public final class ShutdownViewInjector {
             // 只要 getter 仍在，就可从原方法结果安全取得容器。
             int getterHookCount = 0;
             try {
-                Set<XC_MethodHook.Unhook> getterHooks = XposedBridge.hookAllMethods(
+                XC_MethodHook.Unhook getterHook = hookExactIfPresent(
                         targetClass,
                         "getShutdownViewContainer",
+                        new Class<?>[0],
                         new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
@@ -118,7 +121,7 @@ public final class ShutdownViewInjector {
                             }
                         }
                         });
-                getterHookCount = getterHooks == null ? 0 : getterHooks.size();
+                getterHookCount = getterHook == null ? 0 : 1;
             } catch (Throwable getterHookError) {
                 ModuleLog.w(LOG, "getShutdownViewContainer Hook 不可用", getterHookError);
             }
@@ -153,8 +156,14 @@ public final class ShutdownViewInjector {
                 return false;
             }
 
-            Set<XC_MethodHook.Unhook> barHooks = XposedBridge.hookAllMethods(
-                    viewClass, "drawBar", new XC_MethodHook() {
+            boolean hasLegacyDrawBar = hasExactMethod(viewClass, "drawBar",
+                    new Class<?>[]{Canvas.class});
+            boolean hasLegacyEmergencyBar = hasExactMethod(viewClass, "drawEmergencyBar",
+                    new Class<?>[]{Canvas.class});
+
+            XC_MethodHook.Unhook barHook = hookExactIfPresent(viewClass, "drawBar",
+                    new Class<?>[]{Canvas.class},
+                    new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
                             try {
@@ -188,8 +197,8 @@ public final class ShutdownViewInjector {
                         }
                     });
 
-            Set<XC_MethodHook.Unhook> emergencyHooks = XposedBridge.hookAllMethods(
-                    viewClass, "drawEmergencyBar", new XC_MethodHook() {
+            XC_MethodHook.Unhook emergencyHook = hookExactIfPresent(viewClass,
+                    "drawEmergencyBar", new Class<?>[]{Canvas.class}, new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
                             try {
@@ -231,8 +240,52 @@ public final class ShutdownViewInjector {
                         }
                     });
 
-            Set<XC_MethodHook.Unhook> emergencyVisibilityHooks =
-                    XposedBridge.hookAllMethods(viewClass, "isShowEmergency",
+            // 旧版也有 onDraw，它会继续调用 drawBar/drawEmergencyBar。只有这一对精确
+            // 方法均不存在时，才将 ColorOS 16 的内联绘制作为备用路径，避免重复偏移。
+            XC_MethodHook.Unhook onDrawHook = null;
+            if (!hasLegacyDrawBar && !hasLegacyEmergencyBar) {
+                // ColorOS 16 合并了 drawBar/drawEmergencyBar，所有绘制都在 onDraw 内完成。
+                // 通过临时扩大绘制宽度，让 bar 的中心向左偏移；onDraw 返回后恢复，避免
+                // 影响 onMeasure 和后续布局。新版的紧急呼叫绘制也跟随同一 bar 中心。
+                onDrawHook = hookExactIfPresent(viewClass, "onDraw",
+                        new Class<?>[]{Canvas.class}, new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            try {
+                                float offset = originalBarOffset(param.thisObject);
+                                if (Math.abs(offset) < 0.5f) {
+                                    return;
+                                }
+                                int width = XposedHelpers.getIntField(
+                                        param.thisObject, "mOplusShutdownViewWidth");
+                                param.setObjectExtra("bpm_original_width_coloros16", width);
+                                XposedHelpers.setIntField(param.thisObject,
+                                        "mOplusShutdownViewWidth",
+                                        Math.max(1, width + Math.round(offset * 2f)));
+                            } catch (Throwable error) {
+                                ModuleLog.e(LOG, "ColorOS 16 调整原版滑条绘制坐标失败", error);
+                            }
+                        }
+
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            Object original = param.getObjectExtra(
+                                    "bpm_original_width_coloros16");
+                            if (!(original instanceof Integer)) {
+                                return;
+                            }
+                            try {
+                                XposedHelpers.setIntField(param.thisObject,
+                                        "mOplusShutdownViewWidth", (Integer) original);
+                            } catch (Throwable error) {
+                                ModuleLog.e(LOG, "ColorOS 16 恢复原版 View 宽度失败", error);
+                            }
+                        }
+                        });
+            }
+
+            XC_MethodHook.Unhook emergencyVisibilityHook =
+                    hookExactIfPresent(viewClass, "isShowEmergency", new Class<?>[0],
                             new XC_MethodHook() {
                                 @Override
                                 protected void afterHookedMethod(MethodHookParam param) {
@@ -248,16 +301,49 @@ public final class ShutdownViewInjector {
                                 }
                             });
 
-            boolean success = barHooks != null && !barHooks.isEmpty()
-                    && emergencyHooks != null && !emergencyHooks.isEmpty()
-                    && emergencyVisibilityHooks != null
-                    && !emergencyVisibilityHooks.isEmpty();
+            boolean oldVersionSuccess = barHook != null && emergencyHook != null;
+            boolean colorOs16Success = onDrawHook != null;
+            boolean success = (oldVersionSuccess || colorOs16Success)
+                    && emergencyVisibilityHook != null;
             if (!success) {
                 ModuleLog.w(LOG, "原版 View Hook 不完整，为避免移动紧急呼叫将禁用注入");
+            } else if (colorOs16Success && !oldVersionSuccess) {
+                ModuleLog.i(LOG, "检测到 ColorOS 16 OplusShutdownView.onDraw，使用新版绘制 Hook");
             }
             return success;
         } catch (Throwable error) {
             ModuleLog.e(LOG, "安装原版 View 分离 Hook 失败", error);
+            return false;
+        }
+    }
+
+    /**
+     * 仅 Hook 当前 ROM 已验证的声明方法和签名，避免名称相同的重载或父类方法误匹配。
+     */
+    private static XC_MethodHook.Unhook hookExactIfPresent(Class<?> targetClass,
+                                                            String methodName,
+                                                            Class<?>[] parameterTypes,
+                                                            XC_MethodHook hook) {
+        try {
+            Method method = targetClass.getDeclaredMethod(methodName, parameterTypes);
+            return XposedBridge.hookMethod(method, hook);
+        } catch (NoSuchMethodException missingMethod) {
+            ModuleLog.d(LOG, "方法不存在，跳过 Hook: " + targetClass.getName()
+                    + "#" + methodName);
+            return null;
+        } catch (Throwable error) {
+            ModuleLog.w(LOG, "安装精确 Hook 失败: " + targetClass.getName()
+                    + "#" + methodName, error);
+            return null;
+        }
+    }
+
+    private static boolean hasExactMethod(Class<?> targetClass, String methodName,
+                                          Class<?>[] parameterTypes) {
+        try {
+            targetClass.getDeclaredMethod(methodName, parameterTypes);
+            return true;
+        } catch (NoSuchMethodException ignored) {
             return false;
         }
     }
